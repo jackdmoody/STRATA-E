@@ -108,9 +108,8 @@ Raw Sysmon / Windows Event Telemetry (CSV or JSON)
 ## Installation
 
 ```bash
-# Clone and create a virtual environment
-git clone https://github.com/jackdmoody/Sysmon_Behavioral_Analytic.git
-cd Sysmon_Behavioral_Analytic/strata_repo
+git clone https://github.com/jackdmoody/STRATA-E.git
+cd STRATA-E
 python -m venv .venv
 
 # Activate (Windows)
