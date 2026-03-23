@@ -277,46 +277,103 @@ STRATA-(E) scores each host independently across four channels. The corroboratio
 
 ---
 
+ 
 ## Event Severity Grading
-
+ 
 Each Sysmon/Windows event ID is assigned a severity score in [0, 1] based on threat-hunting signal value:
-
+ 
 | Score | Label | Example events |
 |---|---|---|
 | 0.95–1.00 | Critical | Event 10 (ProcessAccess/LSASS), Event 8 (CreateRemoteThread), Event 4104 (PS Script Block) |
 | 0.80–0.90 | High | Event 3 (Network Connection), Event 7 (Image Load), Event 11 (File Create), Event 22 (DNS Query), Event 7045 (Service Installed) |
 | 0.60–0.75 | Medium | Event 1 (Process Create), Event 12/13 (Registry), Event 17 (Named Pipe), Event 4624 (Logon) |
 | 0.20–0.40 | Low | Event 5 (Process Terminate), Event 7036 (Service Start/Stop), App crashes |
-
+ 
 ---
-
+ 
 ## MITRE ATT&CK Coverage
-
-Each event is annotated with the most specific applicable ATT&CK technique based on event ID + behavioral context flags. The mapping is evidence-based — no external threat intelligence feeds required.
-
-| Technique ID | Name | Tactic | Triggered by |
+ 
+STRATA-(E) maps each event to the most specific applicable ATT&CK technique using event ID, process image, and behavioral context flags. The mapping is evidence-based — no external threat intelligence feeds required. Coverage is organized by tactic below.
+ 
+### Execution
+ 
+| T-code | Technique | How STRATA-E addresses it |
+|---|---|---|
+| T1059.001 | PowerShell | Explicit `SCRIPT:POWERSHELL` token; encoded command flag (`-enc`, `-encodedcommand`) detection in Context Channel |
+| T1059.003 | Windows Command Shell | `SCRIPT:CMD` token class; parent-child chain modeling in transition sequences |
+| T1059.005 | Visual Basic (WScript/CScript) | `SCRIPT:WSCRIPT` and `SCRIPT:CSCRIPT` tokens; script interpreter execution tracking |
+| T1059 (general) | Command and Scripting Interpreter | `SCRIPT` coarse token class; sequence anomaly scoring detects novel script-to-process transitions |
+| T1047 | Windows Management Instrumentation | `wmic.exe` classified as LOLBin; WMI-initiated process chains tracked via transition modeling |
+| T1106 | Native API | Covered indirectly via Event 8 (CreateRemoteThread) and Event 7 (Image Load) — API-level execution surfaces as observable Sysmon events |
+ 
+### Defense Evasion
+ 
+| T-code | Technique | How STRATA-E addresses it |
+|---|---|---|
+| T1027 | Obfuscated Files or Information | Encoded command flags (`has_encoded`, `has_bypass`, `has_reflection`) are named Context Channel signals; TF-IDF command novelty scoring detects obfuscated command lines |
+| T1218.011 | System Binary Proxy Execution: Rundll32 | Explicit `LOLBIN:RUNDLL32` token; LOLBin usage is a weighted context flag |
+| T1218.010 | System Binary Proxy Execution: Regsvr32 | Explicit `LOLBIN:REGSVR32` token; parent-child transitions from script → LOLBin are scored |
+| T1218.005 | System Binary Proxy Execution: Mshta | `LOLBIN:MSHTA` token; mshta.exe classified in LOLBin set |
+| T1218.003 | System Binary Proxy Execution: CMSTP | `LOLBIN:CMSTP` token; cmstp.exe classified in LOLBin set |
+| T1140 | Deobfuscate/Decode Files or Information | `certutil.exe` LOLBin classification; certutil-to-process transitions flagged |
+| T1036 | Masquerading | Integrity level mismatch detection; unsigned execution flagging (`signed=False` context flag); anomalous process-in-role deviations via Sequence Channel |
+| T1055 | Process Injection | Event 8 (CreateRemoteThread) mapped directly; parent-child integrity mismatch and suspicious parent-child relationship scoring in Context Channel |
+| T1574.002 | Hijack Execution Flow: DLL Side-Loading | Event 6 (Driver Loaded) mapped directly; novel driver load transitions detected by Sequence Channel |
+ 
+### Credential Access
+ 
+| T-code | Technique | How STRATA-E addresses it |
+|---|---|---|
+| T1003 | OS Credential Dumping | Event 10 (ProcessAccess / LSASS) mapped directly at severity 1.0 (highest); pair correlation weights Event 8→10 at 1.0 (near-certain Mimikatz chain) |
+| T1558.003 | Steal or Forge Kerberos Tickets: Kerberoasting | Event 4768 (Kerberos TGT request) mapped; pair correlation for 4768→4769 (TGT→Service Ticket) weighted at 0.85 |
+ 
+### Persistence
+ 
+| T-code | Technique | How STRATA-E addresses it |
+|---|---|---|
+| T1547.001 | Boot or Logon Autostart Execution: Registry Run Keys | Event 12/13 (Registry Object Added/Value Set) mapped; registry→process transitions are explicit pair correlation targets |
+| T1543.003 | Create or Modify System Process: Windows Service | Event 7045 (Service Installed) mapped at severity 0.90; service install→LSASS and service install→process pairs weighted 0.80–0.85 |
+| T1053 | Scheduled Task/Job | Covered via persistence-category synthetic attack injection; process chains involving task scheduler binaries tracked in transition sequences |
+ 
+### Lateral Movement
+ 
+| T-code | Technique | How STRATA-E addresses it |
+|---|---|---|
+| T1021 | Remote Services | Network attributes (dest_ip, dest_port, protocol) are canonical schema fields; Event 4624 (Logon)→Event 7045 (Service Install) pair correlation weighted at 0.80 targets remote service creation |
+| T1570 | Lateral Tool Transfer | Event 4688→Event 3 (Process Creation→Network Connection) and Event 4648→Event 3 (Explicit Credential Logon→Network) are explicit pair correlation targets for lateral movement |
+ 
+### Command and Control
+ 
+| T-code | Technique | How STRATA-E addresses it |
+|---|---|---|
+| T1071 | Application Layer Protocol | Event 22 (DNS Query) mapped directly; Event 1→22 (Process→DNS) and Event 22→3 (DNS→Network Connection) are pair correlation targets for C2 beaconing patterns |
+ 
+### Privilege Escalation
+ 
+| T-code | Technique | How STRATA-E addresses it |
+|---|---|---|
+| T1134 | Access Token Manipulation | Event 4672 (Special Privileges Assigned) mapped at severity 0.90; Event 4688→4672 (Process Creation→Special Privileges) pair weighted at 0.75 |
+ 
+### Discovery
+ 
+| T-code | Technique | How STRATA-E addresses it |
+|---|---|---|
+| T1087 | Account Discovery | Event 4798 (Group Membership Enumeration) mapped directly; Event 1→4798 (Process→Enumeration) pair targets automated reconnaissance |
+| T1082 / T1083 | System / File Discovery | Process behavior baseline deviations detected via Sequence Channel — novel enumeration tool execution surfaces as structural anomaly relative to peer-role baseline |
+ 
+### Pair-level tactic mapping
+ 
+In addition to event-level technique mapping, STRATA-(E) performs **pair-level tactic annotation** on critical event co-occurrences within a configurable time window. Each pair is weighted by specificity:
+ 
+| Weight | Example pair | Tactic | Significance |
 |---|---|---|---|
-| T1059.001 | Command and Scripting Interpreter: PowerShell | Execution | `powershell.exe` or `pwsh.exe` process image |
-| T1059.003 | Command and Scripting Interpreter: Windows Command Shell | Execution | `cmd.exe` process image |
-| T1059.005 | Command and Scripting Interpreter: Visual Basic | Execution | `wscript.exe` or `cscript.exe` process image |
-| T1027 | Obfuscated Files or Information | Defense Evasion | `-enc` / `-encodedcommand` in command line |
-| T1218.011 | System Binary Proxy Execution: Rundll32 | Defense Evasion | `rundll32.exe` LOLBin execution |
-| T1218.010 | System Binary Proxy Execution: Regsvr32 | Defense Evasion | `regsvr32.exe` LOLBin execution |
-| T1218.005 | System Binary Proxy Execution: Mshta | Defense Evasion | `mshta.exe` LOLBin execution |
-| T1218.003 | System Binary Proxy Execution: CMSTP | Defense Evasion | `cmstp.exe` LOLBin execution |
-| T1047 | Windows Management Instrumentation | Execution | `wmic.exe` LOLBin execution |
-| T1140 | Deobfuscate/Decode Files or Information | Defense Evasion | `certutil.exe` LOLBin execution |
-| T1055 | Process Injection | Defense Evasion | Event 8 (CreateRemoteThread) |
-| T1003 | OS Credential Dumping | Credential Access | Event 10 (ProcessAccess — LSASS) |
-| T1543.003 | Create or Modify System Process: Windows Service | Persistence | Event 7045 (Service Installed) |
-| T1547.001 | Boot or Logon Autostart Execution: Registry Run Keys | Persistence | Event 12/13 (Registry modification) |
-| T1574.002 | Hijack Execution Flow: DLL Side-Loading | Defense Evasion | Event 6 (Driver Loaded) |
-| T1134 | Access Token Manipulation | Privilege Escalation | Event 4672 (Special Privileges Assigned) |
-| T1558.003 | Steal or Forge Kerberos Tickets: Kerberoasting | Credential Access | Event 4768 (Kerberos TGT request) |
-| T1087 | Account Discovery | Discovery | Event 4798 (Group Membership Enumeration) |
-| T1071 | Application Layer Protocol | Command and Control | Event 22 (DNS Query) |
-
-**Pair-level tactic mapping** is also performed on critical event co-occurrences within a time window. Each pair (e.g., Event 8 → Event 10: CreateRemoteThread → LSASS access) is labeled with its MITRE tactic (credential_access, lateral_movement, execution, persistence, c2, defense_evasion, reconnaissance) and weighted by specificity (1.0 = near-certain malicious, 0.5 = requires corroboration).
+| 1.00 | Event 8 → Event 10 (CreateRemoteThread → LSASS) | Credential Access | Near-certain Mimikatz / credential dumper chain |
+| 0.95 | Event 11 → Event 10 (File Drop → LSASS) | Credential Access | Tool written to disk then used for credential access |
+| 0.85 | Event 4768 → Event 4769 (TGT → Service Ticket) | Credential Access | Kerberoasting chain |
+| 0.80 | Event 4624 → Event 7045 (Logon → Service Install) | Lateral Movement | Remote service creation |
+| 0.75 | Event 4104 → Event 3 (PS Script Block → Network) | C2 | PowerShell staged download |
+| 0.70 | Event 22 → Event 1 (DNS → Process Create) | Execution | Download-and-execute pattern |
+| 0.50 | Default | Various | Meaningful but requires corroboration |
 
 ---
 
